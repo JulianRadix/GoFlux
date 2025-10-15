@@ -44,3 +44,88 @@ type node struct {
 	nType    nodeType               // what type of node this is
 	children []*node                // child nodes
 }
+
+// addRoute adds a new route to the tree
+// For now, this handles only static routes (no :params or *catchall)
+func (n *node) addRoute(path string, method string, handler HandlerFunc) {
+	// If this is an empty tree, just set this node as the route
+	if len(n.path) == 0 && len(n.children) == 0 {
+		n.path = path
+		n.nType = root
+		n.handlers = make(map[string]HandlerFunc)
+		n.handlers[method] = handler
+		return
+	}
+
+	// Find the longest common prefix between the new path and current node's path
+	commonPrefix := longestCommonPrefix(path, n.path)
+
+	//If paths match exactly, just add the handler
+	if commonPrefix == len(n.path) && commonPrefix == len(path) {
+		if n.handlers == nil {
+			n.handlers = make(map[string]HandlerFunc)
+		}
+		// Check if handler already exists for this method
+		if _, exists := n.handlers[method]; exists {
+			panic("handler already registered for path '" + path + "' and method '" + method + "'")
+		}
+		n.handlers[method] = handler
+		return
+	}
+
+	// If we need to split the current node (uncommon prefix)
+	if commonPrefix < len(n.path) {
+		// Create a child with the remaining part of the current path
+		child := &node{
+			path:     n.path[commonPrefix:],
+			handlers: n.handlers,
+			children: n.children,
+			nType:    static,
+		}
+
+		// Update current node to only have the common prefix
+		n.path = n.path[:commonPrefix]
+		n.children = []*node{child}
+		n.handlers = nil
+	}
+
+	// If new path is longer than common prefix, we need to add a child
+	if commonPrefix < len(path) {
+		remainingPath := path[commonPrefix:]
+
+		// Check if a child already exists that matches
+		for _, child := range n.children {
+			if child.path[0] == remainingPath[0] {
+				// Recursively add to this child
+				child.addRoute(remainingPath, method, handler)
+				return
+			}
+		}
+
+		// No matching child, create a new one
+		newChild := &node{
+			path:     remainingPath,
+			handlers: make(map[string]HandlerFunc),
+			nType:    static,
+		}
+		newChild.handlers[method] = handler
+		n.children = append(n.children, newChild)
+	}
+}
+
+// longestCommonPrefix finds the length of the common prefix between two strings
+func longestCommonPrefix(a, b string) int {
+	i := 0
+	max := min(len(a), len(b))
+	for i < max && a[i] == b[i] {
+		i++
+	}
+	return i
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
