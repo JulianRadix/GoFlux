@@ -5,10 +5,10 @@ import (
 )
 
 // HandlerFunc defines the handler used by GoFlux
-// It receives the response writer, request and any URL parameters
+// It receives the response writer, request, and any URL parameters
 type HandlerFunc func(http.ResponseWriter, *http.Request, Params)
 
-// Params is a slice of parameters key-value pairs extracted from the URL
+// Params is a slice of parameter key-value pairs extracted from the URL
 type Params []Param
 
 // Param represents a single URL parameter (like id in /users/:id)
@@ -41,7 +41,7 @@ const (
 type node struct {
 	path     string                 // the path segment this node represents
 	handlers map[string]HandlerFunc // maps HTTP method -> handler function
-	nType    nodeType               // what type of node this is
+	nType    nodeType               // what type of node is this
 	children []*node                // child nodes
 }
 
@@ -60,7 +60,7 @@ func (n *node) addRoute(path string, method string, handler HandlerFunc) {
 	// Find the longest common prefix between the new path and current node's path
 	commonPrefix := longestCommonPrefix(path, n.path)
 
-	//If paths match exactly, just add the handler
+	// Case 1: Paths match exactly, just add the handler
 	if commonPrefix == len(n.path) && commonPrefix == len(path) {
 		if n.handlers == nil {
 			n.handlers = make(map[string]HandlerFunc)
@@ -73,9 +73,26 @@ func (n *node) addRoute(path string, method string, handler HandlerFunc) {
 		return
 	}
 
-	// If we need to split the current node (uncommon prefix)
+	// Case 2: New path is a prefix of current node (like /users when node is /users/profile)
+	if commonPrefix == len(path) && commonPrefix < len(n.path) {
+		// Split the node
+		child := &node{
+			path:     n.path[commonPrefix:],
+			handlers: n.handlers,
+			children: n.children,
+			nType:    static,
+		}
+
+		n.path = path
+		n.children = []*node{child}
+		n.handlers = make(map[string]HandlerFunc)
+		n.handlers[method] = handler
+		return
+	}
+
+	// Case 3: We need to split the current node (uncommon prefix)
 	if commonPrefix < len(n.path) {
-		// Create a child with the remaining part of the current path
+		// Create a child with the remaining part of current path
 		child := &node{
 			path:     n.path[commonPrefix:],
 			handlers: n.handlers,
@@ -123,6 +140,7 @@ func longestCommonPrefix(a, b string) int {
 	return i
 }
 
+// min returns the smaller of two integers
 func min(a, b int) int {
 	if a < b {
 		return a
