@@ -147,3 +147,42 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// getVlaue searches the tree for matching route
+func (n *node) getValue(path string, method string) (HandlerFunc, Params) {
+	// Walk through the tree
+walk:
+	for {
+		// If the path is longer than this node's path
+		if len(path) > len(n.path) {
+			// Check if the node's path is a prefix of the search path
+			if path[:len(n.path)] == n.path {
+				path = path[len(n.path):] // Remove the matches prefix
+
+				// Try to find a matching child
+				for _, child := range n.children {
+					// Check if child's first character matches
+					if len(child.path) > 0 && child.path[0] == path[0] {
+						n = child
+						continue walk
+					}
+				}
+
+				// No matching child found
+				return nil, nil
+			}
+		}
+
+		// Check if we found an exact match
+		if path == n.path {
+			if handler, ok := n.handlers[method]; ok {
+				return handler, nil
+			}
+			// Path matches but method doesn't
+			return nil, nil
+		}
+
+		// No match found
+		return nil, nil
+	}
+}

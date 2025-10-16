@@ -105,3 +105,73 @@ func TestAddRoute_NestedRoutes(t *testing.T) {
 		t.Error("Expected children for nested routes")
 	}
 }
+
+// Tests for getValue (route lookup)
+
+func TestGetValue_ExactMatch(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/users", "GET", testHandler)
+
+	handler, _ := tree.getValue("/users", "GET")
+	if handler == nil {
+		t.Error("Expected to find handler for /users GET")
+	}
+}
+
+func TestGetValue_NotFound(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/users", "GET", testHandler)
+
+	handler, _ := tree.getValue("/posts", "GET")
+	if handler != nil {
+		t.Error("Expected no handler for /posts")
+	}
+}
+
+func TestGetValue_WrongMethod(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/users", "GET", testHandler)
+
+	handler, _ := tree.getValue("/users", "POST")
+	if handler != nil {
+		t.Error("Expected no handler for POST /users")
+	}
+}
+
+func TestGetValue_NestedRoute(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/users/profile", "GET", testHandler)
+	tree.addRoute("/users/settings", "GET", testHandler)
+
+	handler, _ := tree.getValue("/users/profile", "GET")
+	if handler == nil {
+		t.Error("Expected to find handler for /users/profile")
+	}
+
+	handler, _ = tree.getValue("/users/settings", "GET")
+	if handler == nil {
+		t.Error("Expected to find handler for /users/settings")
+	}
+}
+
+func TestGetValue_MultipleRoutes(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/users", "GET", testHandler)
+	tree.addRoute("/about", "GET", testHandler)
+	tree.addRoute("/contact", "GET", testHandler)
+
+	handler, _ := tree.getValue("/users", "GET")
+	if handler == nil {
+		t.Error("Expected to find /users")
+	}
+
+	handler, _ = tree.getValue("/about", "GET")
+	if handler == nil {
+		t.Error("Expected to find /about")
+	}
+
+	handler, _ = tree.getValue("/contact", "GET")
+	if handler == nil {
+		t.Error("Expected to find /contact")
+	}
+}
