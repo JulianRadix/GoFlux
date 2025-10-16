@@ -175,3 +175,101 @@ func TestGetValue_MultipleRoutes(t *testing.T) {
 		t.Error("Expected to find /contact")
 	}
 }
+
+// Tests for parameters
+
+func TestAddRoute_WithParam(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/users/:id", "GET", testHandler)
+
+	// Should have wildChild flag set
+	if !tree.wildChild {
+		t.Error("Expected wildChild to be true")
+	}
+
+	// Should have a param type child
+	if len(tree.children) != 1 {
+		t.Errorf("Expected 1 child, got %d", len(tree.children))
+	}
+
+	if tree.children[0].nType != param {
+		t.Errorf("Expected param type, got %d", tree.children[0].nType)
+	}
+}
+
+func TestAddRoute_WithCatchAll(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/files/*filepath", "GET", testHandler)
+
+	// Should have wildChild flag set
+	if !tree.wildChild {
+		t.Error("Expected wildChild to be true")
+	}
+
+	// Should have a catchAll type child
+	if len(tree.children) != 1 {
+		t.Errorf("Expected 1 child, got %d", len(tree.children))
+	}
+
+	if tree.children[0].nType != catchAll {
+		t.Errorf("Expected catchAll type, got %d", tree.children[0].nType)
+	}
+}
+
+func TestGetValue_WithParam(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/users/:id", "GET", testHandler)
+
+	handler, params := tree.getValue("/users/123", "GET")
+	if handler == nil {
+		t.Error("Expected to find handler")
+	}
+
+	if len(params) != 1 {
+		t.Errorf("Expected 1 param, got %d", len(params))
+	}
+
+	if params.ByName("id") != "123" {
+		t.Errorf("Expected id=123, got %s", params.ByName("id"))
+	}
+}
+
+func TestGetValue_WithMultipleParams(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/posts/:slug/comments/:commentId", "GET", testHandler)
+
+	handler, params := tree.getValue("/posts/hello-world/comments/456", "GET")
+	if handler == nil {
+		t.Error("Expected to find handler")
+	}
+
+	if len(params) != 2 {
+		t.Errorf("Expected 2 params, got %d", len(params))
+	}
+
+	if params.ByName("slug") != "hello-world" {
+		t.Errorf("Expected slug=hello-world, got %s", params.ByName("slug"))
+	}
+
+	if params.ByName("commentId") != "456" {
+		t.Errorf("Expected commentId=456, got %s", params.ByName("commentId"))
+	}
+}
+
+func TestGetValue_WithCatchAll(t *testing.T) {
+	tree := &node{}
+	tree.addRoute("/files/*filepath", "GET", testHandler)
+
+	handler, params := tree.getValue("/files/docs/readme.md", "GET")
+	if handler == nil {
+		t.Error("Expected to find handler")
+	}
+
+	if len(params) != 1 {
+		t.Errorf("Expected 1 param, got %d", len(params))
+	}
+
+	if params.ByName("filepath") != "docs/readme.md" {
+		t.Errorf("Expected filepath=docs/readme.md, got %s", params.ByName("filepath"))
+	}
+}

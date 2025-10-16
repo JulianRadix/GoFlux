@@ -39,21 +39,61 @@ const (
 
 // node represents a single node in the radix tree
 type node struct {
-	path     string                 // the path segment this node represents
-	handlers map[string]HandlerFunc // maps HTTP method -> handler function
-	nType    nodeType               // what type of node is this
-	children []*node                // child nodes
+	path      string                 // the path segment this node represents
+	handlers  map[string]HandlerFunc // maps HTTP method -> handler function
+	nType     nodeType               // what type of node is this
+	children  []*node                // child nodes
+	wildChild bool                   // true if any child is param or catchAll
 }
 
 // addRoute adds a new route to the tree
-// For now, this handles only static routes (no :params or *catchall)
 func (n *node) addRoute(path string, method string, handler HandlerFunc) {
-	// If this is an empty tree, just set this node as the route
+	// If this is an empty tree
 	if len(n.path) == 0 && len(n.children) == 0 {
-		n.path = path
 		n.nType = root
-		n.handlers = make(map[string]HandlerFunc)
-		n.handlers[method] = handler
+
+		// Check if path has wildcards
+		wildcard, wildcardIndex, valid := findWildcard(path)
+
+		if wildcardIndex >= 0 {
+			if !valid {
+				panic("invalid wildcard in path: " + path)
+			}
+
+			// Split into static part and wildcard part
+			if wildcardIndex > 0 {
+				n.path = path[:wildcardIndex]
+
+				// Create wildcard child
+				child := &node{
+					path:     wildcard,
+					nType:    param,
+					handlers: make(map[string]HandlerFunc),
+				}
+
+				if wildcard[0] == '*' {
+					child.nType = catchAll
+				}
+
+				child.handlers[method] = handler
+				n.children = append(n.children, child)
+				n.wildChild = true
+			} else {
+				// Wildcard at the start
+				n.path = wildcard
+				n.nType = param
+				if wildcard[0] == '*' {
+					n.nType = catchAll
+				}
+				n.handlers = make(map[string]HandlerFunc)
+				n.handlers[method] = handler
+			}
+		} else {
+			// No wildcard, simple static route
+			n.path = path
+			n.handlers = make(map[string]HandlerFunc)
+			n.handlers[method] = handler
+		}
 		return
 	}
 
@@ -119,14 +159,69 @@ func (n *node) addRoute(path string, method string, handler HandlerFunc) {
 			}
 		}
 
-		// No matching child, create a new one
-		newChild := &node{
-			path:     remainingPath,
-			handlers: make(map[string]HandlerFunc),
-			nType:    static,
+		// No matching child, check if new path has wildcards
+		wildcard, wildcardIndex, valid := findWildcard(remainingPath)
+
+		if wildcardIndex >= 0 {
+			// Path has a wildcard, need special handling
+			if !valid {
+				panic("invalid wildcard in path: " + remainingPath)
+			}
+
+			// If wildcard doesn't start at beginning, we need to add a static node first
+			if wildcardIndex > 0 {
+				// Create a static child for the part before wildcard
+				staticChild := &node{
+					path:  remainingPath[:wildcardIndex],
+					nType: static,
+				}
+				n.children = append(n.children, staticChild)
+
+				// Now continue from the static child
+				remainingPath = remainingPath[wildcardIndex:]
+				wildcard, _, _ = findWildcard(remainingPath)
+
+				// Create wildcard as child of the static node
+				wildcardChild := &node{
+					path:  wildcard,
+					nType: param,
+				}
+
+				if wildcard[0] == '*' {
+					wildcardChild.nType = catchAll
+				}
+
+				wildcardChild.handlers = make(map[string]HandlerFunc)
+				wildcardChild.handlers[method] = handler
+				staticChild.children = append(staticChild.children, wildcardChild)
+				staticChild.wildChild = true
+				return
+			}
+			// Create wildcard child
+			child := &node{
+				path:  wildcard,
+				nType: param, // Will be set to catchAll if it starts with *
+			}
+
+			// Check if it's a catch-all (*filepath)
+			if wildcard[0] == '*' {
+				child.nType = catchAll
+			}
+
+			child.handlers = make(map[string]HandlerFunc)
+			child.handlers[method] = handler
+			n.children = append(n.children, child)
+			n.wildChild = true
+		} else {
+			// No wildcard, regular static child
+			newChild := &node{
+				path:     remainingPath,
+				handlers: make(map[string]HandlerFunc),
+				nType:    static,
+			}
+			newChild.handlers[method] = handler
+			n.children = append(n.children, newChild)
 		}
-		newChild.handlers[method] = handler
-		n.children = append(n.children, newChild)
 	}
 }
 
@@ -148,8 +243,10 @@ func min(a, b int) int {
 	return b
 }
 
-// getVlaue searches the tree for matching route
+// getValue searches the tree for a matching route
 func (n *node) getValue(path string, method string) (HandlerFunc, Params) {
+	var params Params
+
 	// Walk through the tree
 walk:
 	for {
@@ -157,12 +254,65 @@ walk:
 		if len(path) > len(n.path) {
 			// Check if the node's path is a prefix of the search path
 			if path[:len(n.path)] == n.path {
-				path = path[len(n.path):] // Remove the matches prefix
+				path = path[len(n.path):] // Remove the matched prefix
 
-				// Try to find a matching child
+				// If this node has wildcard children, check them
+				if n.wildChild {
+					for _, child := range n.children {
+						// Handle parameter nodes (:id)
+						if child.nType == param {
+							// Find the end of the parameter value
+							end := 0
+							for end < len(path) && path[end] != '/' {
+								end++
+							}
+
+							// Extract parameter name (remove the :)
+							paramName := child.path[1:]
+							paramValue := path[:end]
+
+							// Add to params
+							params = append(params, Param{
+								Key:   paramName,
+								Value: paramValue,
+							})
+
+							// Continue with remaining path
+							if end < len(path) {
+								path = path[end:]
+								n = child
+								continue walk
+							}
+
+							// End of path, check if handler exists
+							if handler, ok := child.handlers[method]; ok {
+								return handler, params
+							}
+							return nil, nil
+						}
+
+						// Handle catch-all nodes (*filepath)
+						if child.nType == catchAll {
+							// Extract parameter name (remove the *)
+							paramName := child.path[1:]
+
+							// Rest of path is the value
+							params = append(params, Param{
+								Key:   paramName,
+								Value: path,
+							})
+
+							if handler, ok := child.handlers[method]; ok {
+								return handler, params
+							}
+							return nil, nil
+						}
+					}
+				}
+
+				// Try to find a matching static child
 				for _, child := range n.children {
-					// Check if child's first character matches
-					if len(child.path) > 0 && child.path[0] == path[0] {
+					if child.nType == static && len(child.path) > 0 && child.path[0] == path[0] {
 						n = child
 						continue walk
 					}
@@ -176,7 +326,7 @@ walk:
 		// Check if we found an exact match
 		if path == n.path {
 			if handler, ok := n.handlers[method]; ok {
-				return handler, nil
+				return handler, params
 			}
 			// Path matches but method doesn't
 			return nil, nil
@@ -185,4 +335,30 @@ walk:
 		// No match found
 		return nil, nil
 	}
+}
+
+// findWildcard finds the first wildcard segment (:param or *catchall) in the path
+// Returns: wildcard string, index where it starts, and whether it's valid
+func findWildcard(path string) (wildcard string, i int, valid bool) {
+	// Find the first : or *
+	for start, c := range []byte(path) {
+		if c != ':' && c != '*' {
+			continue
+		}
+
+		// Found a wildcard
+		valid = true
+
+		// Find where the wildcard ends (at / or end of string)
+		for end, c := range []byte(path[start+1:]) {
+			if c == '/' {
+				return path[start : start+1+end], start, valid
+			}
+		}
+
+		// Wildcard goes to end of path
+		return path[start:], start, valid
+	}
+
+	return "", -1, false
 }
